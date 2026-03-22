@@ -275,6 +275,14 @@
     </div>
 
     <script>
+    // Khi vừa mở app, lấy dữ liệu từ localStorage ra
+var duLieuCu = localStorage.getItem('danhSachThuoc');
+if (duLieuCu) {
+    dsThuoc = JSON.parse(duLieuCu);
+}
+
+randomTinNhan();
+hienThiThuoc();
         // Kiểm tra xem trình duyệt có hỗ trợ Service Worker và Push API không
         if ('serviceWorker' in navigator && 'PushManager' in window) {
             console.log('Trình duyệt có hỗ trợ Web Push!');
@@ -542,19 +550,23 @@
 
         // --- MODULE 3: THUỐC ---
         var dsThuoc = [];
-        function themThuoc() {
-            var ten = document.getElementById('ten-thuoc').value;
-            var gio = document.getElementById('gio-uong').value;
-            if (ten == "" || gio == "") {
-                alert("Vui lòng điền đủ tên thuốc và giờ!");
-                return;
-            }
-            dsThuoc.push({ ten: ten, gio: gio });
-            hienThiThuoc();
-            noi("Con đã ghi nhớ lịch uống thuốc " + ten + " lúc " + gio + " rồi ạ.");
-            document.getElementById('ten-thuoc').value = "";
-            document.getElementById('gio-uong').value = "";
-        }
+function themThuoc() {
+    var ten = document.getElementById('ten-thuoc').value;
+    var gio = document.getElementById('gio-uong').value;
+    if (ten == "" || gio == "") {
+        alert("Vui lòng điền đủ tên thuốc và giờ!");
+        return;
+    }
+    dsThuoc.push({ ten: ten, gio: gio });
+
+    // LƯU VÀO BỘ NHỚ ĐIỆN THOẠI
+    localStorage.setItem('danhSachThuoc', JSON.stringify(dsThuoc));
+
+    hienThiThuoc();
+    noi("Con đã ghi nhớ lịch uống thuốc " + ten + " lúc " + gio + " rồi ạ.");
+    document.getElementById('ten-thuoc').value = "";
+    document.getElementById('gio-uong').value = "";
+}
 
         function hienThiThuoc() {
             var vungHienThi = document.getElementById('danh-sach-thuoc');
@@ -572,34 +584,51 @@
         function dongThongBaoThuoc() {
             document.getElementById('thong-bao-thuoc-hien-thi').style.display = 'none';
         }
+    // Tự động hỏi quyền thông báo khi vừa vào trang
+window.addEventListener('load', () => {
+    xinQuyenThongBao(); 
+    randomTinNhan();
+    hienThiThuoc();
+});
 
         // --- CHẠY BAN ĐẦU ---
         randomTinNhan();
         hienThiThuoc();
         var thuocDaNhac = {};
 
-        setInterval(function () {
-            var gioHeThong = new Date();
-            // Format giờ hệ thống chuẩn HH:mm
-            var gioPhut = gioHeThong.getHours().toString().padStart(2, '0') + ":" +
-                gioHeThong.getMinutes().toString().padStart(2, '0');
-            var ngayHienTai = gioHeThong.toDateString();
+setInterval(function () {
+    var gioHeThong = new Date();
+    var gioPhut = gioHeThong.getHours().toString().padStart(2, '0') + ":" +
+        gioHeThong.getMinutes().toString().padStart(2, '0');
+    var ngayHienTai = gioHeThong.toDateString();
 
-            for (var i = 0; i < dsThuoc.length; i++) {
-                // Cắt chuỗi để lấy đúng định dạng HH:mm phòng trường hợp trình duyệt lưu thêm giây
-                var gioThuoc = dsThuoc[i].gio.substring(0, 5);
-                var keyNhac = ngayHienTai + "_" + gioThuoc + "_" + dsThuoc[i].ten;
+    for (var i = 0; i < dsThuoc.length; i++) {
+        var gioThuoc = dsThuoc[i].gio.substring(0, 5);
+        var keyNhac = ngayHienTai + "_" + gioThuoc + "_" + dsThuoc[i].ten;
 
-                if (gioThuoc === gioPhut && !thuocDaNhac[keyNhac]) {
-                    // HIỂN THỊ BOX THÔNG BÁO LÊN MÀN HÌNH
-                    document.getElementById('ten-thuoc-hien-thi').innerText = "Thuốc: " + dsThuoc[i].ten;
-                    document.getElementById('thong-bao-thuoc-hien-thi').style.display = 'flex';
+        if (gioThuoc === gioPhut && !thuocDaNhac[keyNhac]) {
+            // 1. Hiển thị box trong app (như cũ)
+            document.getElementById('ten-thuoc-hien-thi').innerText = "Thuốc: " + dsThuoc[i].ten;
+            document.getElementById('thong-bao-thuoc-hien-thi').style.display = 'flex';
 
-                    noi("Ông bà ơi, đến giờ uống thuốc " + dsThuoc[i].ten + " rồi ạ!");
-                    thuocDaNhac[keyNhac] = true;
-                }
+            // 2. PHÁT THÔNG BÁO HỆ THỐNG (Cực kỳ quan trọng để hiện khi tắt màn hình)
+            if (Notification.permission === 'granted') {
+                navigator.serviceWorker.ready.then(function(registration) {
+                    registration.showNotification('ĐẾN GIỜ UỐNG THUỐC!', {
+                        body: 'Ông bà ơi, đến giờ uống ' + dsThuoc[i].ten + ' rồi ạ!',
+                        icon: 'https://cdn-icons-png.flaticon.com/512/883/883356.png',
+                        vibrate: [200, 100, 200], // Rung điện thoại
+                        tag: 'nhac-thuoc-' + dsThuoc[i].ten, // Tránh trùng lặp
+                        requireInteraction: true // Thông báo không tự mất cho đến khi ông bà bấm vào
+                    });
+                });
             }
-        }, 1000); // Check mỗi 1 giây (1000ms) để hiện thông báo ngay lập tức
+
+            noi("Ông bà ơi, đến giờ uống thuốc " + dsThuoc[i].ten + " rồi ạ!");
+            thuocDaNhac[keyNhac] = true;
+        }
+    }
+}, 1000);
 
     </script>
 </body>
