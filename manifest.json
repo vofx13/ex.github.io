@@ -1,0 +1,15 @@
+{
+  "name": "Silver Digital - Trợ Lý Ông Bà",
+  "short_name": "SilverDigital",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#007bff",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/883/883356.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
