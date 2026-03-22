@@ -9,16 +9,6 @@
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#007bff">
 
-    <script>
-        // Đăng ký Service Worker
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('sw.js')
-                    .then(reg => console.log('Đã sẵn sàng chạy nền!', reg))
-                    .catch(err => console.log('Lỗi đăng ký:', err));
-            });
-        }
-    </script>
     <style>
         /* PHẦN GIAO DIỆN (CSS) */
         body {
@@ -250,56 +240,56 @@
         // ==============================================
         // 1. KHỞI TẠO BIẾN TOÀN CỤC & LẤY DỮ LIỆU CŨ
         // ==============================================
-        var dsThuoc = [];
+        var dsThuoc = JSON.parse(localStorage.getItem('danhSachThuoc')) || [];
         var thuocDaNhac = {};
         var tinNhanHienTai = null;
-        var mayQuet;
+        var mayQuet = null;
         var dangXuLy = false;
+        var cameraDangChay = false; // Biến cờ mới để fix lỗi crash camera
         let vietnameseVoice = null;
         let loiNoiHienTai = null;
 
-        var duLieuCu = localStorage.getItem('danhSachThuoc');
-        if (duLieuCu) {
-            dsThuoc = JSON.parse(duLieuCu);
-        }
-
         // ==============================================
-        // 2. KHỞI TẠO CÁC HÀM HỆ THỐNG
+        // 2. ĐĂNG KÝ SERVICE WORKER & XIN QUYỀN
         // ==============================================
-        if ('serviceWorker' in navigator && 'PushManager' in window) {
-            console.log('Trình duyệt có hỗ trợ Web Push!');
-        } else {
-            console.warn('Push messaging không được hỗ trợ');
-        }
-
-        function xinQuyenThongBao() {
-            Notification.requestPermission().then(function (permission) {
-                if (permission === 'granted') {
-                    console.log('Đã được cấp quyền gửi thông báo.');
-                    dangKyServiceWorker();
-                } else {
-                    console.log('Người dùng từ chối cấp quyền.');
-                }
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .then(reg => console.log('Đã đăng ký Service Worker thành công!'))
+                    .catch(err => console.error('Lỗi đăng ký Service Worker:', err));
             });
         }
 
-        function dangKyServiceWorker() {
-            navigator.serviceWorker.register('sw.js')
-                .then(function (swReg) { console.log('Đăng ký Service Worker thành công', swReg); })
-                .catch(function (error) { console.error('Lỗi đăng ký Service Worker', error); });
+        // Fix lỗi trình duyệt chặn quyền: Chỉ xin quyền khi người dùng chạm vào màn hình lần đầu
+        function khoiTaoQuyenHeThong() {
+            if ('Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+                Notification.requestPermission();
+            }
+            // Unlock Audio context cho các trình duyệt khó tính (như Safari/Chrome Mobile)
+            if ('speechSynthesis' in window) {
+                let moKhoaGiongNoi = new SpeechSynthesisUtterance('');
+                moKhoaGiongNoi.volume = 0;
+                window.speechSynthesis.speak(moKhoaGiongNoi);
+            }
         }
+        document.body.addEventListener('click', khoiTaoQuyenHeThong, { once: true });
 
+        // ==============================================
+        // 3. KHỞI TẠO GIỌNG NÓI
+        // ==============================================
         function loadVoices() {
             const voices = window.speechSynthesis.getVoices();
             vietnameseVoice = voices.find(v => v.lang === 'vi-VN' || v.lang.includes('vi'));
         }
         window.speechSynthesis.onvoiceschanged = loadVoices;
-        loadVoices();
-
+        
         function noi(vanBan) {
             if (!('speechSynthesis' in window)) return;
             window.speechSynthesis.cancel();
             setTimeout(() => {
+                // Thử load lại giọng nói nếu mảng rỗng lúc load trang
+                if (!vietnameseVoice) loadVoices(); 
+                
                 loiNoiHienTai = new SpeechSynthesisUtterance(vanBan);
                 if (vietnameseVoice) { loiNoiHienTai.voice = vietnameseVoice; }
                 loiNoiHienTai.lang = 'vi-VN';
@@ -310,7 +300,7 @@
         }
 
         // ==============================================
-        // 3. LOGIC GIAO DIỆN & TÍNH NĂNG
+        // 4. LOGIC CHUYỂN TAB VÀ CAMERA
         // ==============================================
         function doiTab(idManHinh, nut) {
             var tatca = document.getElementsByClassName('man-hinh');
@@ -321,71 +311,59 @@
             for (var i = 0; i < tatcaNut.length; i++) { tatcaNut[i].classList.remove('chon'); }
             nut.classList.add('chon');
 
-            if (idManHinh !== 'man-qr' && typeof mayQuet !== 'undefined' && mayQuet) {
-                mayQuet.stop().catch(err => console.log("Camera đã tắt"));
+            // Fix lỗi crash camera khi chuyển tab nhanh
+            if (idManHinh !== 'man-qr' && mayQuet && cameraDangChay) {
+                mayQuet.stop().then(() => {
+                    cameraDangChay = false;
+                }).catch(err => console.log("Lỗi tắt camera:", err));
             }
-            if (idManHinh === 'man-qr' || idManHinh === 'man-thuoc' || idManHinh === 'man-lua-dao') {
-                if (idManHinh === 'man-lua-dao') randomTinNhan();
-            }
-            if (idManHinh === 'man-tam-giao') { noi("Ông bà muốn biết gì ạ?"); }
+
+            if (idManHinh === 'man-lua-dao') randomTinNhan();
+            if (idManHinh === 'man-tam-giao') noi("Ông bà muốn biết gì ạ?");
         }
 
-        // --- TÂM GIAO ---
-        function hoiTroLy() {
-            var input = document.getElementById('cau-hoi-ai');
-            var cauHoi = input.value.trim();
-            if (!cauHoi) return;
-            var vungChat = document.getElementById('vung-chat');
-            vungChat.innerHTML += `<div class="tin-nhan-nguoi">${cauHoi}</div>`;
-            input.value = "";
-            vungChat.scrollTop = vungChat.scrollHeight;
+        function moCamera() {
+            const vungHienThiKetQua = document.getElementById('ket-qua-qr');
+            vungHienThiKetQua.innerText = "Đang tìm mã QR...";
+            vungHienThiKetQua.style.color = "black";
 
-            var tuKhoa = cauHoi.toLowerCase();
-            var cauTraLoi = "";
+            if (!mayQuet) { mayQuet = new Html5Qrcode("khu-vuc-cam"); }
 
-            if (tuKhoa.includes("ngủ") || tuKhoa.includes("mất ngủ") || tuKhoa.includes("khó ngủ") || tuKhoa.includes("trằn trọc") || tuKhoa.includes("ngủ không ngon") || tuKhoa.includes("ngủ ít")) {
-                cauTraLoi = "Dạ, để ngủ ngon hơn, ông bà nên ngâm chân nước gừng ấm trước khi ngủ, tránh uống trà xanh hay cà phê sau 4 giờ chiều và giữ phòng tối, yên tĩnh ạ.";
-            } else if (tuKhoa.includes("thời tiết") || tuKhoa.includes("nắng") || tuKhoa.includes("mưa") || tuKhoa.includes("bão") || tuKhoa.includes("lạnh") || tuKhoa.includes("nóng") || tuKhoa.includes("dự báo") || tuKhoa.includes("mệt")) {
-                cauTraLoi = "Dạ, dạo này thời tiết hay thay đổi thất thường. Nếu trời lạnh ông bà nhớ quàng khăn ấm, còn nếu nắng gắt thì nên ở trong nhà cho mát, đừng ra ngoài lúc giữa trưa ông bà nhé.";
-            } else if (tuKhoa.includes("ăn") || tuKhoa.includes("uống") || tuKhoa.includes("đói") || tuKhoa.includes("tiêu hóa") || tuKhoa.includes("món gì") || tuKhoa.includes("đầy bụng")) {
-                cauTraLoi = "Dạ, ở tuổi mình ông bà nên ăn thức ăn mềm, nấu chín kỹ và chia nhỏ bữa ăn ạ. Ông bà nhớ ăn nhiều rau xanh, bớt muối và uống đủ nước mỗi ngày để tốt cho tiêu hóa nhé.";
-            } else if (tuKhoa.includes("đi bộ") || tuKhoa.includes("tập thể dục") || tuKhoa.includes("vận động") || tuKhoa.includes("đau lưng") || tuKhoa.includes("mỏi gối") || tuKhoa.includes("xương khớp")) {
-                cauTraLoi = "Dạ, việc vận động nhẹ nhàng rất tốt ạ. Ông bà có thể đi bộ chậm vào buổi sáng hoặc tập các động tác xoay khớp cổ tay, cổ chân nhẹ nhàng tại chỗ để khí huyết lưu thông ạ.";
-            } else if (tuKhoa.includes("buồn") || tuKhoa.includes("chán") || tuKhoa.includes("cô đơn") || tuKhoa.includes("nhớ con") || tuKhoa.includes("nhớ cháu") || tuKhoa.includes("một mình")) {
-                cauTraLoi = "Ông bà đừng buồn nhé, có con ở đây trò chuyện cùng ông bà mà. Hay là ông bà gọi điện cho các cháu qua Zalo một chút cho vui cửa vui nhà được không ạ?";
-            } else if (tuKhoa.includes("điện thoại") || tuKhoa.includes("zalo") || tuKhoa.includes("facebook") || tuKhoa.includes("gọi điện") || tuKhoa.includes("mạng") || tuKhoa.includes("wifi")) {
-                cauTraLoi = "Dạ, dùng điện thoại lúc đầu hơi khó một chút nhưng từ từ sẽ quen ạ. Nếu có chỗ nào chưa rõ, ông bà cứ hỏi con hoặc đợi các cháu về hướng dẫn thêm cho nhanh nhé.";
-            } else if (tuKhoa.includes("đau đầu") || tuKhoa.includes("chóng mặt") || tuKhoa.includes("tức ngực") || tuKhoa.includes("ngã") || tuKhoa.includes("té") || tuKhoa.includes("cấp cứu")) {
-                cauTraLoi = "Trời ơi, ông bà đang thấy không khỏe ạ? Ông bà hãy ngồi xuống ngay lập tức và gọi thật to để con cháu biết, hoặc nhấn nút gọi khẩn cấp trên điện thoại ngay đi ạ!";
-            } else if (tuKhoa.includes("chào") || tuKhoa.includes("hello") || tuKhoa.includes("tên gì") || tuKhoa.includes("giỏi") || tuKhoa.includes("ngoan")) {
-                cauTraLoi = "Dạ, con cảm ơn ông bà ạ! Con là Trợ lý Silver Digital, luôn sẵn sàng lắng nghe và hỗ trợ ông bà mọi lúc mọi nơi.";
-            } else if (tuKhoa.includes("cảm ơn") || tuKhoa.includes("thank you") || tuKhoa.includes("tốt quá") || tuKhoa.includes("hay quá") || tuKhoa.includes("giúp con") || tuKhoa.includes("hữu ích")) {
-                cauTraLoi = "Ông bà khen con làm con vui quá ạ! Con sẽ cố gắng học hỏi thêm để giúp ông bà ngày càng tốt hơn nữa ạ.";
-            } else if (tuKhoa.includes("tạm biệt") || tuKhoa.includes("bye") || tuKhoa.includes("hẹn gặp lại") || tuKhoa.includes("ngủ ngon") || tuKhoa.includes("chúc ngủ ngon")) {
-                cauTraLoi = "Dạ, chúc ông bà ngủ ngon và có những giấc mơ đẹp ạ! Con sẽ luôn ở đây khi ông bà cần nhé.";
-            } else if (tuKhoa.includes("sức khỏe") || tuKhoa.includes("bệnh") || tuKhoa.includes("khỏe không") || tuKhoa.includes("tình hình sức khỏe") || tuKhoa.includes("khám bệnh") || tuKhoa.includes("uống thuốc")) {
-                cauTraLoi = "Dạ, ông bà có thể chia sẻ thêm về tình hình sức khỏe hiện tại được không ạ? Con sẽ cố gắng đưa ra những lời khuyên hữu ích nhất cho ông bà ạ.";
-            } else if (tuKhoa.includes("gia đình") || tuKhoa.includes("con cháu") || tuKhoa.includes("các cháu") || tuKhoa.includes("gia đình mình") || tuKhoa.includes("các con") || tuKhoa.includes("các cháu")) {
-                cauTraLoi = "Dạ, gia đình là điều quý giá nhất ạ. Ông bà có muốn kể cho con nghe về các cháu, về những kỷ niệm đẹp với gia đình mình không ạ?";
-            } else if (tuKhoa.includes("thời gian") || tuKhoa.includes("ngày tháng") || tuKhoa.includes("bây giờ") || tuKhoa.includes("mấy giờ")) {
-                var ngayGio = new Date();
-                cauTraLoi = `Dạ, bây giờ là ${ngayGio.getHours()} giờ ${ngayGio.getMinutes()} phút ngày ${ngayGio.getDate()}/${ngayGio.getMonth() + 1}/${ngayGio.getFullYear()} ạ.`;
-            } else {
-                cauTraLoi = "Dạ, ý của ông bà là sao ạ? Con chưa hiểu rõ lắm, ông bà có thể nói cụ thể hơn về sức khỏe, thời tiết hoặc chuyện gia đình được không ạ?";
-            }
+            mayQuet.start(
+                { facingMode: "environment" }, { fps: 15, qrbox: 250 },
+                function (ketQua) {
+                    if (!dangXuLy) {
+                        dangXuLy = true;
+                        vungHienThiKetQua.innerText = "Quét mã thành công!";
+                        vungHienThiKetQua.style.color = "#28a745";
+                        noi("Dạ, quét mã thành công rồi ạ!");
 
-            setTimeout(() => {
-                vungChat.innerHTML += `<div class="tin-nhan-bot">🤖 ${cauTraLoi}</div>`;
-                vungChat.scrollTop = vungChat.scrollHeight;
-                noi(cauTraLoi);
-            }, 500);
+                        document.getElementById('noi-dung-qr-thanh-cong').innerText = "Nội dung: " + ketQua;
+                        document.getElementById('thong-bao-qr').style.display = 'flex';
+
+                        mayQuet.stop().then(function () {
+                            cameraDangChay = false;
+                        }).catch(function (err) { console.log(err); });
+                    }
+                }, function (loi) { /* Bỏ qua log lỗi tìm kiếm mã liên tục */ }
+            ).then(() => {
+                cameraDangChay = true;
+            }).catch(err => {
+                vungHienThiKetQua.innerText = "Lỗi: " + err;
+                noi("Camera chưa sẵn sàng ạ.");
+            });
         }
 
-        document.getElementById('cau-hoi-ai').addEventListener('keypress', function (e) {
-            if (e.key === 'Enter') { hoiTroLy(); }
-        });
+        function dongThongBaoQR() {
+            document.getElementById('thong-bao-qr').style.display = 'none';
+            dangXuLy = false;
+            document.getElementById('ket-qua-qr').innerText = "Chưa quét được gì...";
+            document.getElementById('ket-qua-qr').style.color = "black";
+        }
 
-        // --- LỪA ĐẢO VÀ AN TOÀN ---
+        // ==============================================
+        // 5. MODULE: LỪA ĐẢO VÀ AN TOÀN
+        // ==============================================
         var danhSachTinNhan = [
             { noiDung: '"Chúc mừng bạn trúng thưởng 1 tỷ đồng! Nhấn vào link: bit.ly/trung-thuong để nhận."', laLuaDao: true },
             { noiDung: '"Ngân hàng thông báo: Tài khoản của bạn sắp bị khóa. Xác minh tại: tinyurl.com/xac-minh"', laLuaDao: true },
@@ -434,47 +412,60 @@
             randomTinNhan();
         }
 
-        // --- QUÉT QR ---
-        function moCamera() {
-            const vungHienThiKetQua = document.getElementById('ket-qua-qr');
-            vungHienThiKetQua.innerText = "Đang tìm mã QR...";
-            vungHienThiKetQua.style.color = "black";
+        // ==============================================
+        // 6. MODULE: TRỢ LÝ ẢO
+        // ==============================================
+        function hoiTroLy() {
+            var input = document.getElementById('cau-hoi-ai');
+            var cauHoi = input.value.trim();
+            if (!cauHoi) return;
+            var vungChat = document.getElementById('vung-chat');
+            vungChat.innerHTML += `<div class="tin-nhan-nguoi">${cauHoi}</div>`;
+            input.value = "";
+            vungChat.scrollTop = vungChat.scrollHeight;
 
-            if (!mayQuet) { mayQuet = new Html5Qrcode("khu-vuc-cam"); }
+            var tuKhoa = cauHoi.toLowerCase();
+            var cauTraLoi = "";
 
-            mayQuet.start(
-                { facingMode: "environment" }, { fps: 15, qrbox: 250 },
-                function (ketQua) {
-                    if (!dangXuLy) {
-                        dangXuLy = true;
-                        vungHienThiKetQua.innerText = "Quét mã thành công!";
-                        vungHienThiKetQua.style.color = "#28a745";
-                        noi("Dạ, quét mã thành công rồi ạ!");
+            if (tuKhoa.includes("ngủ") || tuKhoa.includes("mất ngủ") || tuKhoa.includes("khó ngủ") || tuKhoa.includes("trằn trọc")) {
+                cauTraLoi = "Dạ, để ngủ ngon hơn, ông bà nên ngâm chân nước gừng ấm trước khi ngủ, tránh uống trà xanh hay cà phê sau 4 giờ chiều ạ.";
+            } else if (tuKhoa.includes("thời tiết") || tuKhoa.includes("nắng") || tuKhoa.includes("mưa") || tuKhoa.includes("bão") || tuKhoa.includes("lạnh")) {
+                cauTraLoi = "Dạ, dạo này thời tiết hay thay đổi thất thường. Nếu trời lạnh ông bà nhớ quàng khăn ấm, còn nếu nắng gắt thì nên ở trong nhà cho mát ạ.";
+            } else if (tuKhoa.includes("ăn") || tuKhoa.includes("uống") || tuKhoa.includes("đói") || tuKhoa.includes("tiêu hóa")) {
+                cauTraLoi = "Dạ, ở tuổi mình ông bà nên ăn thức ăn mềm, nấu chín kỹ và chia nhỏ bữa ăn ạ. Uống đủ nước mỗi ngày để tốt cho tiêu hóa nhé.";
+            } else if (tuKhoa.includes("đi bộ") || tuKhoa.includes("tập thể dục") || tuKhoa.includes("đau lưng") || tuKhoa.includes("xương khớp")) {
+                cauTraLoi = "Dạ, việc vận động nhẹ nhàng rất tốt ạ. Ông bà có thể đi bộ chậm vào buổi sáng hoặc xoay khớp tại chỗ để khí huyết lưu thông ạ.";
+            } else if (tuKhoa.includes("buồn") || tuKhoa.includes("chán") || tuKhoa.includes("nhớ con") || tuKhoa.includes("một mình")) {
+                cauTraLoi = "Ông bà đừng buồn nhé, có con ở đây trò chuyện cùng ông bà mà. Hay là ông bà gọi điện cho các cháu qua Zalo một chút cho vui ạ?";
+            } else if (tuKhoa.includes("điện thoại") || tuKhoa.includes("zalo") || tuKhoa.includes("gọi điện") || tuKhoa.includes("mạng")) {
+                cauTraLoi = "Dạ, dùng điện thoại lúc đầu hơi khó một chút nhưng từ từ sẽ quen ạ. Nếu có chỗ nào chưa rõ, ông bà cứ hỏi con nhé.";
+            } else if (tuKhoa.includes("đau đầu") || tuKhoa.includes("chóng mặt") || tuKhoa.includes("ngã") || tuKhoa.includes("cấp cứu")) {
+                cauTraLoi = "Trời ơi, ông bà đang thấy không khỏe ạ? Ông bà hãy ngồi xuống ngay lập tức và gọi thật to để con cháu biết nhé!";
+            } else if (tuKhoa.includes("chào") || tuKhoa.includes("tên gì")) {
+                cauTraLoi = "Dạ, con cảm ơn ông bà ạ! Con là Trợ lý Silver Digital, luôn sẵn sàng lắng nghe và hỗ trợ ông bà mọi lúc mọi nơi.";
+            } else if (tuKhoa.includes("cảm ơn") || tuKhoa.includes("hay quá") || tuKhoa.includes("hữu ích")) {
+                cauTraLoi = "Ông bà khen con làm con vui quá ạ! Con sẽ cố gắng học hỏi thêm để giúp ông bà ngày càng tốt hơn nữa ạ.";
+            } else if (tuKhoa.includes("thời gian") || tuKhoa.includes("ngày tháng") || tuKhoa.includes("bây giờ") || tuKhoa.includes("mấy giờ")) {
+                var ngayGio = new Date();
+                cauTraLoi = `Dạ, bây giờ là ${ngayGio.getHours()} giờ ${ngayGio.getMinutes()} phút ngày ${ngayGio.getDate()}/${ngayGio.getMonth() + 1}/${ngayGio.getFullYear()} ạ.`;
+            } else {
+                cauTraLoi = "Dạ, ý của ông bà là sao ạ? Con chưa hiểu rõ lắm, ông bà có thể nói cụ thể hơn về sức khỏe, thời tiết hoặc chuyện gia đình được không ạ?";
+            }
 
-                        document.getElementById('noi-dung-qr-thanh-cong').innerText = "Nội dung: " + ketQua;
-                        document.getElementById('thong-bao-qr').style.display = 'flex';
-
-                        mayQuet.stop().then(function () {
-                            console.log("Đã tự động tắt camera");
-                        }).catch(function (err) {
-                            console.log("Lỗi khi tắt camera: ", err);
-                        });
-                    }
-                }, function (loi) { }
-            ).catch(err => {
-                vungHienThiKetQua.innerText = "Lỗi: " + err;
-                noi("Camera chưa sẵn sàng ạ.");
-            });
+            setTimeout(() => {
+                vungChat.innerHTML += `<div class="tin-nhan-bot">🤖 ${cauTraLoi}</div>`;
+                vungChat.scrollTop = vungChat.scrollHeight;
+                noi(cauTraLoi);
+            }, 500);
         }
 
-        function dongThongBaoQR() {
-            document.getElementById('thong-bao-qr').style.display = 'none';
-            dangXuLy = false;
-            document.getElementById('ket-qua-qr').innerText = "Chưa quét được gì...";
-            document.getElementById('ket-qua-qr').style.color = "black";
-        }
+        document.getElementById('cau-hoi-ai').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') { hoiTroLy(); }
+        });
 
-        // --- THUỐC ---
+        // ==============================================
+        // 7. MODULE: NHẮC THUỐC & CHECK BACKGROUND
+        // ==============================================
         function themThuoc() {
             var ten = document.getElementById('ten-thuoc').value;
             var gio = document.getElementById('gio-uong').value;
@@ -506,18 +497,7 @@
             document.getElementById('thong-bao-thuoc-hien-thi').style.display = 'none';
         }
 
-        // ==============================================
-        // 4. KÍCH HOẠT KHI TẢI TRANG XONG
-        // ==============================================
-        window.addEventListener('load', () => {
-            xinQuyenThongBao(); 
-            randomTinNhan();
-            hienThiThuoc();
-        });
-
-        // ==============================================
-        // 5. CƠ CHẾ NHẮC NHỞ NGẦM
-        // ==============================================
+        // Vòng lặp kiểm tra giờ chạy mỗi giây
         setInterval(function () {
             var gioHeThong = new Date();
             var gioPhut = gioHeThong.getHours().toString().padStart(2, '0') + ":" +
@@ -529,10 +509,12 @@
                 var keyNhac = ngayHienTai + "_" + gioThuoc + "_" + dsThuoc[i].ten;
 
                 if (gioThuoc === gioPhut && !thuocDaNhac[keyNhac]) {
+                    // Hiện box thông báo
                     document.getElementById('ten-thuoc-hien-thi').innerText = "Thuốc: " + dsThuoc[i].ten;
                     document.getElementById('thong-bao-thuoc-hien-thi').style.display = 'flex';
 
-                    if (Notification.permission === 'granted') {
+                    // Đẩy thông báo hệ thống nếu có quyền
+                    if ('Notification' in window && Notification.permission === 'granted') {
                         navigator.serviceWorker.ready.then(function(registration) {
                             registration.showNotification('ĐẾN GIỜ UỐNG THUỐC!', {
                                 body: 'Ông bà ơi, đến giờ uống ' + dsThuoc[i].ten + ' rồi ạ!',
@@ -549,6 +531,14 @@
                 }
             }
         }, 1000);
+
+        // ==============================================
+        // 8. TẢI DỮ LIỆU BAN ĐẦU
+        // ==============================================
+        window.addEventListener('load', () => {
+            randomTinNhan();
+            hienThiThuoc();
+        });
 
     </script>
 </body>
